@@ -9,5 +9,5 @@ Flask-Session==0.8.0
 requests==2.32.3
 redis==5.0.7
 gunicorn==22.0.0
-psycopg2-binary==2.9.9
+psycopg2-binary>=2.9.9
 waitress==3.0.0

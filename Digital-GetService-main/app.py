@@ -13,8 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, abort, current_app, flash, g, redirect, render_template, request, session, url_for
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+except ImportError:
+    Limiter = None
+    get_remote_address = None
 from flask_session import Session
 from flask_sock import Sock
 from dotenv import load_dotenv
