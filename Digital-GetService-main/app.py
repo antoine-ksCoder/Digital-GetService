@@ -74,7 +74,7 @@ SITE_NAME = "Digital Get Services"
 SITE_PAGE_SET = {
     "accueil",
     "propos",
-    "services",
+"services",
     "realisation",
     "notreEquipe",
     "formulaire",
@@ -83,6 +83,10 @@ SITE_PAGE_SET = {
     "compte",
     "profil",
 }
+
+_global_template_cache: dict[str, Any] = {}
+GLOBAL_CACHE_TIMEOUT = 300  # 5 minutes
+
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -125,7 +129,7 @@ def create_app() -> Flask:
     app.config["MAIL_PASSWORD"] = os.getenv("MAIL_SMTP_PASSWORD", "")
     app.config["MAIL_USE_TLS"] = os.getenv("MAIL_SMTP_USE_TLS", "1") == "1"
     app.config["MAIL_USE_SSL"] = os.getenv("MAIL_SMTP_USE_SSL", "0") == "1"
-    app.config["CONTACT_EMAIL"] = os.getenv("CONTACT_EMAIL", "fedcomfood@gmail.com")
+    app.config["CONTACT_EMAIL"] = os.getenv("CONTACT_EMAIL", "contact@digital-get.com")
     redis_url = os.getenv("REDIS_URL", "").strip()
     ratelimit_storage = os.getenv("RATELIMIT_STORAGE_URI", "").strip()
     if not ratelimit_storage:
@@ -168,9 +172,25 @@ def create_app() -> Flask:
 
     @app.context_processor
     def inject_globals() -> dict[str, Any]:
-        return {
+        context: dict[str, Any] = {
             "site_name": SITE_NAME,
             "user": current_user(),
+            "csrf_token": get_or_create_csrf_token(),
+            "active_page": getattr(g, "active_page", ""),
+            "current_year": datetime.now().year,
+            "hcaptcha_site_key": current_app.config.get("HCAPTCHA_SITE_KEY", ""),
+            "hcaptcha_enabled": current_app.config.get("HCAPTCHA_ENABLED", False),
+        }
+    
+        now = datetime.now()
+        cached_data = _global_template_cache.get("data")
+        last_fetched = _global_template_cache.get("timestamp")
+    
+        if cached_data and last_fetched and (now - last_fetched).total_seconds() < GLOBAL_CACHE_TIMEOUT:
+            context.update(cached_data)
+            return context
+    
+        new_cached_data = {
             "header_data": Header.query.first(),
             "nav_items": [
                 ("accueil", "Accueil"),
@@ -183,12 +203,13 @@ def create_app() -> Flask:
             "footer_socials": ReseauFooter.query.all(),
             "footer_services": ServicesFooter.query.all(),
             "footer_contact": ContactFooter.query.first(),
-            "csrf_token": get_or_create_csrf_token(),
-            "active_page": getattr(g, "active_page", ""),
-            "current_year": datetime.now().year,
-            "hcaptcha_site_key": current_app.config.get("HCAPTCHA_SITE_KEY", ""),
-            "hcaptcha_enabled": current_app.config.get("HCAPTCHA_ENABLED", False),
         }
+    
+        _global_template_cache["data"] = new_cached_data
+        _global_template_cache["timestamp"] = now
+        context.update(new_cached_data)
+    
+        return context
 
     limited_login = limiter.limit("8 per minute")(handle_login)
     limited_register = limiter.limit("4 per minute")(handle_register)

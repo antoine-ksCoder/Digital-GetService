@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const applyTheme = (theme) => {
         if (theme === 'dark') {
-            document.body.setAttribute('data-theme', 'dark');
+            document.documentElement.setAttribute('data-theme', 'dark');
             if (themeIcon) {
                 themeIcon.classList.remove('ri-moon-line');
                 themeIcon.classList.add('ri-sun-line');
@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 themeToggle.setAttribute('aria-label', 'Activer le theme clair');
             }
         } else {
-            document.body.removeAttribute('data-theme');
+            document.documentElement.removeAttribute('data-theme');
             if (themeIcon) {
                 themeIcon.classList.remove('ri-sun-line');
                 themeIcon.classList.add('ri-moon-line');
@@ -54,17 +54,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const storedTheme = localStorage.getItem(storageKey);
-    if (storedTheme) {
-        applyTheme(storedTheme);
-    } else {
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        applyTheme(prefersDark ? 'dark' : 'light');
-    }
+    // Set initial icon based on theme set by inline script
+    const initialTheme = document.documentElement.getAttribute('data-theme');
+    applyTheme(initialTheme);
+
 
     if (themeToggle) {
         themeToggle.addEventListener('click', () => {
-            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             const nextTheme = isDark ? 'light' : 'dark';
             localStorage.setItem(storageKey, nextTheme);
             applyTheme(nextTheme);
