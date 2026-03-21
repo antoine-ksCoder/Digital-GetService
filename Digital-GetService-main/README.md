@@ -3,26 +3,33 @@
 ## Installation
 
 ```bash
-cd Update
+cd Digital-GetService-main
 python -m venv .venv
-.venv\\Scripts\\activate
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Lancer
+## Configuration de l'environnement
+
+### Développement local
+1. Copier `.env.example` en `.env`
+2. Compléter les variables d'environnement **notamment:**
+   - `ADMIN_BOOTSTRAP_EMAIL` - Email de l'administrateur initial
+   - `ADMIN_BOOTSTRAP_PASSWORD` - Mot de passe de l'administrateur (min 8 caractères)
+   - `ADMIN_BOOTSTRAP_NAME` - Nom de l'administrateur
+   - `FLASK_SECRET_KEY` - Clé secrète Flask
 
 ```bash
-set FLASK_SECRET_KEY=change-me
-set DB_PATH=..\\base_donnees.sqlite
-set ADMIN_BOOTSTRAP_EMAIL=admin@exemple.com
-set ADMIN_BOOTSTRAP_PASSWORD=ChangeMe123!
-set MAX_UPLOAD_MB=5
-set HCAPTCHA_SITE_KEY=your-site-key
-set HCAPTCHA_SECRET_KEY=your-secret-key
-set REDIS_URL=redis://localhost:6379/0
-set RATELIMIT_STORAGE_URI=
-set SESSION_TYPE=redis
-set SESSION_KEY_PREFIX=dgs:session:
+cp .env.example .env
+# Editer .env avec vos valeurs
+```
+
+## Lancer l'application
+
+```bash
 python app.py
 ```
 
@@ -41,22 +48,46 @@ Par defaut, `REDIS_URL` est utilise pour le rate-limit et les sessions.
 
 ## Production (.env + serveur WSGI)
 
-1. Remplir `Update/.env` (ou copier `Update/.env.example`).
-2. Installer les dependances:
+### 1. Configuration du fichier .env
+Créer un fichier `.env` à la racine avec vos paramètres de production:
+```bash
+cp .env.example .env
+# Editer .env avec vos valeurs de production
+```
+
+**Variables critiques à configurer:**
+- `ADMIN_BOOTSTRAP_EMAIL` et `ADMIN_BOOTSTRAP_PASSWORD` - Identifiants admin initiaux
+- `FLASK_SECRET_KEY` - Clé secrète robuste (générer avec: `python -c "import secrets; print(secrets.token_hex(32))"`)
+- `MAIL_SMTP_*` - Configuration du serveur email
+- `HCAPTCHA_SITE_KEY` et `HCAPTCHA_SECRET_KEY` - Pour la capture CAPTCHA
+- `SESSION_COOKIE_SECURE=1` - Pour HTTPS
+- `DATABASE_URL` - Si personnalisé
+
+### 2. Installation des dépendances
 ```bash
 pip install -r requirements.txt
 ```
-3. Linux (Render/Docker): lancer avec gunicorn:
+
+### 3. Lancer avec un serveur WSGI
+
+**Linux/Docker avec gunicorn:**
 ```bash
 gunicorn -w 2 --threads 4 --timeout 120 -b 0.0.0.0:5000 app:app
 ```
 
-Note: pour activer les WebSockets en production, preferez gunicorn + gevent:
+Pour WebSockets en production:
 ```bash
 gunicorn -k gevent -w 1 -b 0.0.0.0:5000 app:app
 ```
 
-4. Windows local: lancer avec waitress:
+**Windows avec waitress:**
 ```bash
 waitress-serve --listen=0.0.0.0:5000 app:app
 ```
+
+### 4. Sécurité
+⚠️ **IMPORTANT:**
+- Ne JAMAIS commiter le fichier `.env` (protégé par `.gitignore`)
+- Utiliser un gestionnaire de secrets pour les vraies clés en production
+- Changer `ADMIN_BOOTSTRAP_PASSWORD` après la première connexion
+- Générer une nouvelle `FLASK_SECRET_KEY` pour chaque déploiement

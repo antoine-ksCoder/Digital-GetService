@@ -28,6 +28,9 @@ from werkzeug.utils import secure_filename
 import requests
 import redis
 
+# Load environment variables from .env file
+load_dotenv()
+
 try:
     from .models import (
         ContactFooter,
