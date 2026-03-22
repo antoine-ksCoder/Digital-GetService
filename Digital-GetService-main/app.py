@@ -1845,8 +1845,13 @@ def send_mail(to_email: str, subject: str, text_body: str, html_body: str, reply
 
 
 def seed_default_admin() -> None:
-    if User.query.count() > 0:
+    try:
+        if User.query.count() > 0:
+            return
+    except Exception:
+        # Les tables n'existent pas encore, ce n'est pas une erreur
         return
+    
     email = os.getenv("ADMIN_BOOTSTRAP_EMAIL", "").strip().lower()
     password = os.getenv("ADMIN_BOOTSTRAP_PASSWORD", "")
     if not email or not password or len(password) < 8:

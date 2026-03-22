@@ -23,47 +23,118 @@ from sqlalchemy import create_engine, inspect, text
 def build_database_url():
     """
     Construit la chaîne de connexion DATABASE_URL
+    Supporte SQLite (local) ou distante (MySQL/PostgreSQL)
     """
 
     print("=" * 70)
-    print("🔧 CONFIGURATION BASE DE DONNÉES DISTANTE")
+    print("🔧 CONFIGURATION BASE DE DONNÉES")
     print("=" * 70)
 
-    # Demander les informations
-    print("\n📋 Veuillez fournir les informations de connexion:\n")
+    print("\n📋 Choisir le type de base de données:\n")
+    print("1️⃣  SQLite (local) - Recommandé pour développement")
+    print("2️⃣  MySQL (distante)")
+    print("3️⃣  PostgreSQL (distante)")
 
-    db_type = input("Type de BD (postgresql/mysql): ").strip().lower()
-    if db_type not in ("postgresql", "mysql"):
-        print("❌ Type invalide. Choisir 'postgresql' ou 'mysql'")
+    db_choice = input("\nChoisir (1/2/3): ").strip()
+
+    if db_choice == "1":
+        return build_sqlite_url()
+    elif db_choice == "2":
+        return build_mysql_url()
+    elif db_choice == "3":
+        return build_postgresql_url()
+    else:
+        print("❌ Choix invalide. Choisir 1, 2 ou 3")
         return None
+
+
+def build_sqlite_url():
+    """
+    Configure une base de données SQLite locale
+    """
+    print("\n" + "=" * 70)
+    print("🗄️  CONFIGURATION SQLite LOCAL")
+    print("=" * 70)
+
+    default_path = str(Path(__file__).parent.parent / "base_donnees.sqlite")
+    db_path = input(f"\nChemin de la BD SQLite (défaut: {default_path}): ").strip()
+    if not db_path:
+        db_path = default_path
+
+    # Créer le répertoire si nécessaire
+    db_file = Path(db_path)
+    db_file.parent.mkdir(parents=True, exist_ok=True)
+
+    database_url = f"sqlite:///{db_file.resolve()}"
+    print(f"\n✅ URL SQLite: {database_url}")
+    return database_url
+
+
+def build_mysql_url():
+    """
+    Configure une base de données MySQL distante
+    """
+    print("\n" + "=" * 70)
+    print("📍 CONFIGURATION MySQL DISTANTE")
+    print("=" * 70)
+
+    print("\n📋 Veuillez fournir les informations de connexion:\n")
 
     host = input("Adresse hôte (ex: db.example.com): ").strip()
     if not host:
         print("❌ Adresse hôte requise")
         return None
 
-    port_input = input(f"Port (défaut {5432 if db_type == 'postgresql' else 3306}): ").strip()
-    port = port_input if port_input else (5432 if db_type == "postgresql" else 3306)
+    port_input = input("Port (défaut 3306): ").strip()
+    port = port_input if port_input else 3306
 
     username = input("Nom d'utilisateur: ").strip()
     if not username:
         print("❌ Utilisateur requis")
         return None
 
-    password = input("Mot de passe (laisser vide pour XAMPP): ").strip()
-    # Mot de passe vide accepté pour XAMPP
+    password = input("Mot de passe: ").strip()
 
     database = input("Nom de la base de données: ").strip()
     if not database:
         print("❌ Nom BD requis")
         return None
 
-    # Construire l'URL
-    if db_type == "postgresql":
-        database_url = f"postgresql://{username}:{password}@{host}:{port}/{database}"
-    else:  # mysql
-        database_url = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+    database_url = f"mysql+pymysql://{username}:{password}@{host}:{port}/{database}"
+    return database_url
 
+
+def build_postgresql_url():
+    """
+    Configure une base de données PostgreSQL distante
+    """
+    print("\n" + "=" * 70)
+    print("📍 CONFIGURATION PostgreSQL DISTANTE")
+    print("=" * 70)
+
+    print("\n📋 Veuillez fournir les informations de connexion:\n")
+
+    host = input("Adresse hôte (ex: db.example.com): ").strip()
+    if not host:
+        print("❌ Adresse hôte requise")
+        return None
+
+    port_input = input("Port (défaut 5432): ").strip()
+    port = port_input if port_input else 5432
+
+    username = input("Nom d'utilisateur: ").strip()
+    if not username:
+        print("❌ Utilisateur requis")
+        return None
+
+    password = input("Mot de passe: ").strip()
+
+    database = input("Nom de la base de données: ").strip()
+    if not database:
+        print("❌ Nom BD requis")
+        return None
+
+    database_url = f"postgresql://{username}:{password}@{host}:{port}/{database}"
     return database_url
 
 
@@ -77,7 +148,7 @@ def test_connection(database_url):
 
     # Masquer le mot de passe dans l'affichage
     display_url = database_url
-    if "@" in display_url:
+    if "@" in display_url and "sqlite" not in display_url:
         parts = display_url.split("@")
         user_pass = parts[0].rsplit("://", 1)[1]
         if ":" in user_pass:
@@ -90,7 +161,7 @@ def test_connection(database_url):
         # Charger le .env temporaire
         os.environ["DATABASE_URL"] = database_url
 
-        # Nouveau flux : créer un moteur de connexion dédié pour tester la connexion
+        # Créer un moteur de connexion dédié
         engine = create_engine(
             database_url,
             pool_pre_ping=True,
@@ -99,7 +170,7 @@ def test_connection(database_url):
                 "connect_timeout": 10,
                 "read_timeout": 30,
                 "write_timeout": 30,
-            },
+            } if "sqlite" not in database_url else {},
         )
 
         with engine.connect() as connection:
@@ -116,7 +187,7 @@ def test_connection(database_url):
 
             if tables:
                 print(f"\n⚠️  {len(tables)} table(s) trouvée(s):")
-                for table in tables:
+                for table in sorted(tables):
                     print(f"  - {table}")
             else:
                 print("\n✅ Base de données vide (aucune table)")
@@ -210,12 +281,28 @@ def main():
     Flux principal
     """
 
-    # Étape 1: Construire l'URL
-    database_url = build_database_url()
-    if not database_url:
-        return False
+    # Vérifier si DATABASE_URL est déjà définie dans .env
+    existing_url = os.getenv("DATABASE_URL", "").strip()
+    if existing_url:
+        print("=" * 70)
+        print("🔍 BASE DE DONNÉES DÉTECTÉE")
+        print("=" * 70)
+        print(f"\n✅ DATABASE_URL déjà configurée dans .env")
+        
+        choice = input("\nVoulez-vous utiliser cette configuration? (oui/non): ").strip().lower()
+        if choice not in ("oui", "o", "yes", "y"):
+            database_url = build_database_url()
+            if not database_url:
+                return False
+        else:
+            database_url = existing_url
+    else:
+        # Étape 1: Construire l'URL
+        database_url = build_database_url()
+        if not database_url:
+            return False
 
-    print(f"\n✅ URL construite: {database_url[:50]}...")
+    print(f"\n✅ URL construite: {database_url[:60]}...")
 
     # Étape 2: Tester la connexion
     if not test_connection(database_url):
@@ -235,18 +322,19 @@ def main():
         return False
 
     # Étape 4: Sauvegarder dans .env
-    confirm = input(
-        "\n❓ Sauvegarder DATABASE_URL dans .env? (oui/non): "
-    ).strip().lower()
-    if confirm not in ("oui", "o", "yes", "y"):
-        print("\n⚠️  Non sauvegardée. À configurer manuellement:")
-        print(f"   DATABASE_URL={database_url}")
-        return False
+    if existing_url != database_url:
+        confirm = input(
+            "\n❓ Sauvegarder DATABASE_URL dans .env? (oui/non): "
+        ).strip().lower()
+        if confirm not in ("oui", "o", "yes", "y"):
+            print("\n⚠️  Non sauvegardée. À configurer manuellement:")
+            print(f"   DATABASE_URL={database_url}")
+            return False
 
-    if not save_to_env(database_url):
-        print("\n⚠️  Non sauvegardée. À configurer manuellement:")
-        print(f"   DATABASE_URL={database_url}")
-        return False
+        if not save_to_env(database_url):
+            print("\n⚠️  Non sauvegardée. À configurer manuellement:")
+            print(f"   DATABASE_URL={database_url}")
+            return False
 
     # Succès!
     print("\n" + "=" * 70)
