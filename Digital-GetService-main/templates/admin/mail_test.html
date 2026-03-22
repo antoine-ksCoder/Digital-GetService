@@ -1,0 +1,168 @@
+{% extends 'admin/base.html' %}
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-lg-8 offset-lg-2">
+            <h2 class="mb-4">🧪 Test de Configuration Email</h2>
+
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Configuration Actuelle</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <tbody>
+                                <tr>
+                                    <td><strong>Email activé:</strong></td>
+                                    <td id="mail-enabled" class="badge badge-primary">Chargement...</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Serveur SMTP:</strong></td>
+                                    <td id="mail-host">Chargement...</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Port:</strong></td>
+                                    <td id="mail-port">Chargement...</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Utilisateur:</strong></td>
+                                    <td id="mail-username">Chargement...</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>TLS/SSL:</strong></td>
+                                    <td id="mail-security">Chargement...</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Email de contact:</strong></td>
+                                    <td id="mail-contact">Chargement...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Résultat du Test</h5>
+                </div>
+                <div class="card-body">
+                    <div id="test-result" class="alert alert-light text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="sr-only">Teste la connexion...</span>
+                        </div>
+                        <p class="mt-2">Test en cours...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">Aide et Dépannage</h5>
+                </div>
+                <div class="card-body">
+                    <h6>Configuration défaillante?</h6>
+                    <ul>
+                        <li>Vérifier le fichier <code>.env</code> à la racine du projet</li>
+                        <li>Les valeurs par défaut (your_email@...) ne fonctionnent pas</li>
+                        <li>Vous devez remplir les identifiants réels</li>
+                    </ul>
+
+                    <h6 class="mt-3">Pour Gmail:</h6>
+                    <ol>
+                        <li>Générer un "mot de passe d'application" (pas le mot de passe principal)</li>
+                        <li>Voir le guide complet: <a href="{{ url_for('static', filename='../EMAIL_CONFIG.md') }}">EMAIL_CONFIG.md</a></li>
+                    </ol>
+
+                    <h6 class="mt-3">Test depuis le formulaire:</h6>
+                    <p>Aller à <a href="{{ url_for('site_page', page='formulaire') }}">/site/formulaire</a> et tester l'envoi d'un message.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.badge {
+    padding: 0.5em;
+    font-size: 0.9em;
+}
+
+.badge-enabled {
+    background-color: #28a745 !important;
+}
+
+.badge-disabled {
+    background-color: #dc3545 !important;
+}
+
+code {
+    background-color: #f4f4f4;
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+}
+</style>
+
+<script>
+(async () => {
+    try {
+        const response = await fetch('/backoffice/api/mail-test');
+        const data = await response.json();
+
+        // Remplir la configuration
+        document.getElementById('mail-enabled').textContent = data.config.enabled ? '✅ Activé' : '❌ Désactivé';
+        document.getElementById('mail-enabled').className = data.config.enabled ? 'badge badge-enabled' : 'badge badge-disabled';
+
+        document.getElementById('mail-host').textContent = data.config.host || '(non configuré)';
+        document.getElementById('mail-port').textContent = data.config.port;
+        document.getElementById('mail-username').textContent = data.config.has_username ? '(configuré)' : '(non configuré)';
+        document.getElementById('mail-contact').textContent = data.config.contact_email;
+
+        const security = `${data.config.use_tls ? 'TLS' : ''} ${data.config.use_ssl ? 'SSL' : ''}`.trim() || 'Aucun';
+        document.getElementById('mail-security').textContent = security;
+
+        // Remplir le résultat du test
+        const resultDiv = document.getElementById('test-result');
+
+        if (data.status === 'success') {
+            resultDiv.className = 'alert alert-success';
+            resultDiv.innerHTML = `
+                <h5 class="text-success">✅ Test Réussi!</h5>
+                <p>La connexion au serveur SMTP fonctionne correctement.</p>
+            `;
+        } else if (data.status === 'disabled') {
+            resultDiv.className = 'alert alert-warning';
+            resultDiv.innerHTML = `
+                <h5>⚠️ Email Désactivé</h5>
+                <p>Les emails sont actuellement désactivés (MAIL_ENABLED=0 dans .env)</p>
+                <small>Les messages de contact s'afficheront comme envoyés mais sans email réel.</small>
+            `;
+        } else if (data.status === 'not_configured') {
+            resultDiv.className = 'alert alert-warning';
+            resultDiv.innerHTML = `
+                <h5>⚠️ Email Non Configuré</h5>
+                <p>MAIL_SMTP_HOST n'est pas configuré dans le fichier .env</p>
+                <p>Les emails seront ignorés silencieusement.</p>
+            `;
+        } else if (data.status === 'error') {
+            resultDiv.className = 'alert alert-danger';
+            resultDiv.innerHTML = `
+                <h5>❌ Erreur</h5>
+                <p><strong>Message d'erreur:</strong></p>
+                <code style="display: block; background: #fff; padding: 10px; border-radius: 5px; margin-top: 10px; word-break: break-word;">
+                    ${data.message}
+                </code>
+            `;
+        }
+    } catch (error) {
+        document.getElementById('test-result').innerHTML = `
+            <div class="alert alert-danger">
+                <h5>❌ Erreur de diagnostic</h5>
+                <p>${error.message}</p>
+            </div>
+        `;
+    }
+})();
+</script>
+{% endblock %}

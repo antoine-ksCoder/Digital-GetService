@@ -3,7 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ site_name }}</title>
+
+    <!-- SEO Meta Tags -->
+    <title>{{ title or site_name }}</title>
+    <meta name="description" content="{{ description or 'Digital Get Services - Vos solutions digitales tout-en-un' }}">
+    <meta name="keywords" content="{{ keywords or 'digital, solutions, services' }}">
+    <meta name="author" content="Digital Get Services">
+    <meta name="language" content="French">
+    <meta name="robots" content="index, follow">
+    <meta name="googlebot" content="index, follow">
+
+    <!-- Canonical URL (important pour éviter les duplicates) -->
+    <link rel="canonical" href="{{ request.base_url }}">
+
+    <!-- Open Graph Meta Tags (pour réseaux sociaux) -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Digital Get Services">
+    <meta property="og:title" content="{{ title or site_name }}">
+    <meta property="og:description" content="{{ description or 'Vos solutions digitales tout-en-un' }}">
+    <meta property="og:image" content="{{ og_image or url_for('static', filename='images/logo1.jpeg', _external=True) }}">
+    <meta property="og:url" content="{{ request.base_url }}">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{ title or site_name }}">
+    <meta name="twitter:description" content="{{ description or 'Vos solutions digitales tout-en-un' }}">
+    <meta name="twitter:image" content="{{ og_image or url_for('static', filename='images/logo1.jpeg', _external=True) }}">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='images/logo1.jpeg') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='images/logo1.jpeg') }}" type="image/jpeg">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/logo1.jpeg') }}">
+
+    <!-- CSS Links -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css">
+    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <!-- JSON-LD Structured Data (pour Google) -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Digital Get Services",
+        "url": "{{ url_for('site_page', page='accueil', _external=True) }}",
+        "logo": "{{ url_for('static', filename='images/logo1.jpeg', _external=True) }}",
+        "description": "Vos solutions digitales tout-en-un. Digital Get Services conçoit et execute des experiences digitales performantes pour accelerer votre croissance.",
+        "sameAs": [
+            "https://www.facebook.com/digitalgetservices",
+            "https://www.linkedin.com/company/digitalgetservices",
+            "https://twitter.com/digitalgetservices"
+        ],
+        "contactPoint": {
+            "@type": "ContactPoint",
+            "telephone": "{{ contact_phone or '+33 1 XX XX XX XX' }}",
+            "contactType": "Customer Service",
+            "email": "{{ contact_email or 'contact@digital-get.com' }}"
+        }
+    }
+    </script>
+
     <script>
         (function() {
             const storageKey = 'site-theme';
@@ -14,12 +75,6 @@
             }
         })();
     </script>
-    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='images/logo1.jpeg') }}">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css">
-    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
 <header class="sticky-top">
@@ -52,6 +107,9 @@
                         <i class="ri-moon-line" id="themeToggleIcon"></i>
                     </button>
                     {% if user %}
+                    <a class="btn btn-outline-success btn-sm magnetic-btn" href="{{ url_for('site_chat') }}" title="Chat support">
+                        <i class="ri-chat-1-line"></i> Chat
+                    </a>
                     <a class="btn btn-outline-primary btn-sm magnetic-btn" href="{{ url_for('site_page', page='compte') }}">Mon profil</a>
                     <a class="btn btn-primary btn-sm magnetic-btn" href="{{ url_for('site_logout') }}">Deconnexion</a>
                     {% else %}

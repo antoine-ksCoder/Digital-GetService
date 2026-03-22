@@ -124,6 +124,10 @@ def create_app() -> Flask:
     app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "change-me-dev-secret")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SQLALCHEMY_DATABASE_URI"] = resolve_database_uri()
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_recycle": 280,  # Recycle la connexion avant le timeout du serveur (souvent 300s sur bcp d'hébergeurs)
+    "pool_pre_ping": True, # Teste la connexion avant chaque requête
+}
     app.config["MAIL_ENABLED"] = os.getenv("MAIL_ENABLED", "1") != "0"
     app.config["MAIL_HOST"] = os.getenv("MAIL_SMTP_HOST", "")
     app.config["MAIL_PORT"] = int(os.getenv("MAIL_SMTP_PORT", "25"))
@@ -169,7 +173,6 @@ def create_app() -> Flask:
     sock.init_app(app)
     session_ext.init_app(app)
     with app.app_context():
-        db.create_all()
         ensure_schema_compatibility()
         seed_default_admin()
 
@@ -217,6 +220,59 @@ def create_app() -> Flask:
     limited_login = limiter.limit("8 per minute")(handle_login)
     limited_register = limiter.limit("4 per minute")(handle_register)
 
+    @app.route("/sitemap.xml")
+    def sitemap() -> Any:
+        """Génère un sitemap XML pour les moteurs de recherche"""
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        pages = [
+            ("accueil", 1.0),  # Priority
+            ("propos", 0.9),
+            ("services", 0.9),
+            ("realisation", 0.8),
+            ("notreEquipe", 0.7),
+            ("formulaire", 0.8),
+        ]
+
+        sitemap_entries = []
+        for page, priority in pages:
+            sitemap_entries.append({
+                "url": url_for("site_page", page=page, _external=True),
+                "lastmod": today,
+                "priority": priority,
+            })
+
+        xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+        xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        for entry in sitemap_entries:
+            xml += f'  <url>\n'
+            xml += f'    <loc>{entry["url"]}</loc>\n'
+            xml += f'    <lastmod>{entry["lastmod"]}</lastmod>\n'
+            xml += f'    <priority>{entry["priority"]}</priority>\n'
+            xml += f'  </url>\n'
+        xml += '</urlset>'
+
+        return xml, 200, {"Content-Type": "application/xml; charset=utf-8"}
+
+    @app.route("/robots.txt")
+    def robots() -> Any:
+        """Fichier robots.txt pour les moteurs de recherche"""
+        robots_txt = f"""User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /backoffice
+Disallow: /api/
+Allow: /api/mail-test
+Allow: /static/
+Allow: /site/
+
+Crawl-delay: 1
+
+Sitemap: {url_for('sitemap', _external=True)}
+"""
+        return robots_txt, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
     @app.route("/")
     def root() -> Any:
         return redirect(url_for("site_page", page="accueil"))
@@ -241,7 +297,12 @@ def create_app() -> Flask:
         if page in {"compte", "profil"}:
             return handle_profile()
         if page == "formulaire":
-            return render_template("site/formulaire.html")
+            seo_data = {
+                "title": "Contactez Nous - Digital Get Services",
+                "description": "Envoyez-nous votre message. Audit initial offert, sans engagement. Réponse en moins de 24 heures.",
+                "keywords": "contact, formulaire, demande devis, audit",
+            }
+            return render_template("site/formulaire.html", **seo_data)
 
         return render_template(f"site/{page}.html", **build_site_context(page))
 
@@ -297,6 +358,192 @@ def create_app() -> Flask:
     def site_logout() -> Any:
         session.pop("site_user_id", None)
         return redirect(url_for("site_page", page="login"))
+
+    @app.route("/site/chat")
+    def site_chat() -> Any:
+        user = current_user()
+        if user is None:
+            return redirect(url_for("site_page", page="login"))
+
+        g.active_page = "site_chat"
+        ws_token = session.get("chat_ws_token")
+        if not ws_token:
+            ws_token = secrets.token_urlsafe(16)
+            session["chat_ws_token"] = ws_token
+        ws_url = current_app.config.get("CHAT_WS_URL", "")
+        if not ws_url:
+            scheme = "wss" if request.is_secure else "ws"
+            ws_url = f"{scheme}://{request.host}/site/ws"
+        return render_template(
+            "site/chat.html",
+            current_user_id=user.id if user else 0,
+            api_base="/site/api",
+            ws_url=ws_url,
+            ws_token=ws_token,
+        )
+
+    @app.get("/site/api/chat_admin")
+    def site_chat_admin() -> Any:
+        user = current_user()
+        if user is None:
+            return {"error": "unauthorized"}, 401
+
+        # Récupérer le premier administrateur actif
+        admin = User.query.filter_by(role="admin", is_active=1).first()
+        if not admin:
+            return {"admin_user": None}
+
+        return {
+            "admin_user": {
+                "id": admin.id,
+                "full_name": admin.full_name,
+                "email": admin.email,
+            }
+        }
+
+    @app.get("/site/api/chat_fetch")
+    def site_chat_fetch() -> Any:
+        user = current_user()
+        if user is None:
+            return {"error": "unauthorized"}, 401
+
+        try:
+            target_id = int(request.args.get("target_id", "0"))
+        except ValueError:
+            return {"error": "invalid_target"}, 400
+
+        if target_id <= 0:
+            return {"error": "invalid_target"}, 400
+
+        target_user = User.query.get(target_id)
+        if not target_user or target_user.role != "admin":
+            return {"error": "not_found"}, 404
+
+        conversation = find_conversation(user.id, target_user.id)
+        messages_payload: list[dict[str, Any]] = []
+        conversation_id = None
+
+        if conversation:
+            conversation_id = conversation.id
+            messages = (
+                db.session.query(Message, User.full_name.label("sender_name"))
+                .join(User, User.id == Message.sender_id)
+                .filter(Message.conversation_id == conversation.id)
+                .order_by(Message.id.asc())
+                .all()
+            )
+            messages_payload = [
+                {
+                    "id": row.Message.id,
+                    "sender_id": row.Message.sender_id,
+                    "content": row.Message.content,
+                    "created_at": row.Message.created_at or "",
+                    "sender_name": row.sender_name,
+                }
+                for row in messages
+            ]
+
+        return {
+            "target_user": {"id": target_user.id, "full_name": target_user.full_name},
+            "conversation_id": conversation_id,
+            "messages": messages_payload,
+        }
+
+    @app.post("/site/api/chat_send")
+    def site_chat_send() -> Any:
+        user = current_user()
+        if user is None:
+            return {"error": "unauthorized"}, 401
+
+        if not verify_csrf_token(request.headers.get("X-CSRF-Token", "")):
+            return {"error": "csrf_invalid"}, 400
+
+        payload = request.get_json(silent=True) or {}
+        try:
+            target_id = int(payload.get("target_id", 0))
+        except (TypeError, ValueError):
+            return {"error": "invalid_target"}, 400
+
+        message = str(payload.get("message", "")).strip()
+        if target_id <= 0 or not message:
+            return {"error": "invalid_payload"}, 400
+
+        target_user = User.query.get(target_id)
+        if not target_user or target_user.role != "admin":
+            return {"error": "not_found"}, 404
+
+        conversation = get_or_create_conversation(user.id, target_user.id)
+        new_message = Message(
+            conversation_id=conversation.id,
+            sender_id=user.id,
+            content=message,
+            created_at=now_iso(),
+        )
+        conversation.updated_at = now_iso()
+        db.session.add(new_message)
+        db.session.commit()
+        return {
+            "message_id": new_message.id,
+            "conversation_id": conversation.id,
+            "target_id": target_user.id,
+        }
+
+    @app.get("/backoffice/api/mail-test")
+    @admin_required
+    def backoffice_mail_test() -> Any:
+        """Test la configuration SMTP par l'admin"""
+        mail_config = {
+            "enabled": current_app.config["MAIL_ENABLED"],
+            "host": current_app.config["MAIL_HOST"],
+            "port": current_app.config["MAIL_PORT"],
+            "from": current_app.config["MAIL_FROM"],
+            "use_tls": current_app.config["MAIL_USE_TLS"],
+            "use_ssl": current_app.config["MAIL_USE_SSL"],
+            "has_username": bool(current_app.config["MAIL_USERNAME"]),
+            "contact_email": current_app.config["CONTACT_EMAIL"],
+        }
+
+        # Si pas activé, retourner l'info
+        if not mail_config["enabled"]:
+            return {
+                "status": "disabled",
+                "message": "Email est désactivé",
+                "config": mail_config,
+            }
+
+        # Si no host, retourner l'info
+        if not mail_config["host"]:
+            return {
+                "status": "not_configured",
+                "message": "MAIL_SMTP_HOST non configuré",
+                "config": mail_config,
+            }
+
+        # Tester la connexion
+        try:
+            smtp_class = smtplib.SMTP_SSL if mail_config["use_ssl"] else smtplib.SMTP
+            with smtp_class(mail_config["host"], mail_config["port"], timeout=5) as smtp:
+                if mail_config["use_tls"] and not mail_config["use_ssl"]:
+                    smtp.starttls()
+
+            return {
+                "status": "success",
+                "message": "Connexion au serveur SMTP réussie",
+                "config": mail_config,
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Erreur: {type(e).__name__}: {str(e)}",
+                "config": mail_config,
+            }, 400
+
+    @app.route("/backoffice/mail-test")
+    @admin_required
+    def backoffice_mail_test_page() -> Any:
+        """Page de test email pour les administrateurs"""
+        g.active_page = "admin_mail_test"
+        return render_template("admin/mail_test.html")
 
     @app.route("/backoffice/login", methods=["GET", "POST"])
     @limiter.limit("5 per minute")
@@ -1325,17 +1572,61 @@ def handle_profile() -> Any:
 
 
 def build_site_context(page: str) -> dict[str, Any]:
+    # Métadonnées SEO par page
+    seo_metadata = {
+        "accueil": {
+            "title": "Digital Get Services - VOS SOLUTIONS DIGITALES TOUT-EN-UN",
+            "description": "VOS SOLUTIONS DIGITALES TOUT-EN-UN. Digital Get Services conçoit et execute des experiences digitales performantes pour accelerer votre croissance.",
+            "keywords": "digital get service, solutions digitales, agence web, expériences numériques, croissance digitale",
+            "og_image": "/static/images/logo1.jpeg",
+        },
+        "propos": {
+            "title": "À propos de Digital Get Services - Notre agence",
+            "description": "Découvrez Digital Get Services, votre partenaire pour des solutions digitales performantes. 120+ missions réussies, 98% de satisfaction client.",
+            "keywords": "à propos, agence digitale, notre équipe, expérience",
+        },
+        "services": {
+            "title": "Nos Services Digitaux - Digital Get Services",
+            "description": "Explorez nos services: développement web, design, marketing digital, et bien d'autres solutions pour votre croissance.",
+            "keywords": "services digitaux, développement web, design graphique, marketing digital, SEO",
+        },
+        "realisation": {
+            "title": "Nos Réalisations - Projets Digitaux - Digital Get Services",
+            "description": "Découvrez nos projets et réalisations digitales. Plus de 120 missions réussies avec nos clients.",
+            "keywords": "réalisations, projets web, portfolio, cas clients",
+        },
+        "notreEquipe": {
+            "title": "Notre Équipe - Digital Get Services",
+            "description": "Rencontrez l'équipe de Digital Get Services, experts en solutions digitales.",
+            "keywords": "équipe, experts, professionnels, consultants",
+        },
+        "formulaire": {
+            "title": "Contactez Nous - Digital Get Services",
+            "description": "Envoyez-nous votre message. Audit initial offert, sans engagement. Réponse en moins de 24 heures.",
+            "keywords": "contact, formulaire, demande devis, audit",
+        },
+    }
+
+    # Récupérer les métadonnées pour cette page (ou utiliser les valeurs par défaut)
+    seo_data = seo_metadata.get(page, {
+        "title": f"{page.capitalize()} - Digital Get Services",
+        "description": "Digital Get Services - Vos solutions digitales tout-en-un",
+        "keywords": "digital, solutions, services",
+    })
+
     if page == "accueil":
         return {
             "domaines": DomaineAccueil.query.filter(
                 or_(DomaineAccueil.is_suspended.is_(None), DomaineAccueil.is_suspended == 0)
-            ).order_by(DomaineAccueil.id.desc()).all()
+            ).order_by(DomaineAccueil.id.desc()).all(),
+            **seo_data,
         }
     if page == "propos":
         return {
             "membres": EquipePropos.query.filter(
                 or_(EquipePropos.is_suspended.is_(None), EquipePropos.is_suspended == 0)
-            ).order_by(EquipePropos.id.desc()).all()
+            ).order_by(EquipePropos.id.desc()).all(),
+            **seo_data,
         }
     if page == "services":
         return {
@@ -1343,12 +1634,14 @@ def build_site_context(page: str) -> dict[str, Any]:
             "legacy_services": ServicesService.query.filter(
                 or_(ServicesService.is_suspended.is_(None), ServicesService.is_suspended == 0)
             ).order_by(ServicesService.id.desc()).all(),
+            **seo_data,
         }
     if page == "realisation":
         return {
             "realisations": Realisation.query.filter(
                 or_(Realisation.is_suspended.is_(None), Realisation.is_suspended == 0)
-            ).order_by(Realisation.id.desc()).all()
+            ).order_by(Realisation.id.desc()).all(),
+            **seo_data,
         }
     if page == "notreEquipe":
         people = (
@@ -1371,8 +1664,9 @@ def build_site_context(page: str) -> dict[str, Any]:
             "membres": MembreNotreEquipe.query.filter(
                 or_(MembreNotreEquipe.is_suspended.is_(None), MembreNotreEquipe.is_suspended == 0)
             ).order_by(MembreNotreEquipe.id.desc()).all(),
+            **seo_data,
         }
-    return {}
+    return seo_data
 
 
 def now_iso() -> str:
@@ -1445,6 +1739,35 @@ def backoffice_ws(ws: Any) -> None:
             CHAT_SOCKETS.remove(connection)
 
 
+@sock.route("/site/ws")
+def site_ws(ws: Any) -> None:
+    user = current_user()
+    token = request.args.get("token", "")
+    session_token = session.get("chat_ws_token", "")
+    if not user or not token or token != session_token:
+        try:
+            ws.close()
+        finally:
+            return
+
+    connection = {"ws": ws, "user_id": user.id}
+    CHAT_SOCKETS.append(connection)
+    try:
+        while True:
+            data = ws.receive()
+            if data is None:
+                break
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("type") == "chat:new_message":
+                broadcast_chat(payload)
+    finally:
+        if connection in CHAT_SOCKETS:
+            CHAT_SOCKETS.remove(connection)
+
+
 def save_image_upload(file_storage: Any, prefix: str, subdir: str | None = None) -> str | None:
     if not file_storage or not file_storage.filename:
         return None
@@ -1483,10 +1806,14 @@ def delete_static_image(reference: str | None) -> None:
 
 def send_mail(to_email: str, subject: str, text_body: str, html_body: str, reply_to: str = "") -> bool:
     if not current_app.config["MAIL_ENABLED"]:
+        app.logger.info("Mail disabled - skipping send")
         return True
+
     host = current_app.config["MAIL_HOST"]
     if not host:
+        app.logger.warning("MAIL_HOST not configured - skipping send")
         return True
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = current_app.config["MAIL_FROM"]
@@ -1495,6 +1822,7 @@ def send_mail(to_email: str, subject: str, text_body: str, html_body: str, reply
         msg["Reply-To"] = reply_to
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
+
     try:
         smtp_class = smtplib.SMTP_SSL if current_app.config["MAIL_USE_SSL"] else smtplib.SMTP
         with smtp_class(host, current_app.config["MAIL_PORT"], timeout=8) as smtp:
@@ -1503,8 +1831,16 @@ def send_mail(to_email: str, subject: str, text_body: str, html_body: str, reply
             if current_app.config["MAIL_USERNAME"]:
                 smtp.login(current_app.config["MAIL_USERNAME"], current_app.config["MAIL_PASSWORD"])
             smtp.sendmail(msg["From"], [to_email], msg.as_string())
+        app.logger.info(f"Email envoyé à {to_email}")
         return True
-    except Exception:
+    except smtplib.SMTPAuthenticationError as e:
+        app.logger.error(f"Erreur SMTP authentification: {e}")
+        return False
+    except smtplib.SMTPException as e:
+        app.logger.error(f"Erreur SMTP: {e}")
+        return False
+    except Exception as e:
+        app.logger.error(f"Erreur envoi email: {type(e).__name__}: {e}")
         return False
 
 
